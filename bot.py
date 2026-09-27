@@ -1,5 +1,7 @@
 import os
+from threading import Thread
 
+from flask import Flask
 from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import (
     Application,
@@ -9,7 +11,44 @@ from telegram.ext import (
     filters,
 )
 
-TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
+
+# =========================
+# TELEGRAM BOT TOKEN
+# =========================
+
+TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
+
+
+# =========================
+# WEB SERVER FOR RENDER
+# =========================
+
+web_app = Flask(__name__)
+
+
+@web_app.route("/")
+def home():
+    return "Leela Telegram Bot is running!"
+
+
+def run_web_server():
+    port = int(os.environ.get("PORT", 10000))
+    web_app.run(
+        host="0.0.0.0",
+        port=port,
+        use_reloader=False
+    )
+
+
+def keep_alive():
+    thread = Thread(target=run_web_server)
+    thread.daemon = True
+    thread.start()
+
+
+# =========================
+# BOT MENU
+# =========================
 
 menu = ReplyKeyboardMarkup(
     [
@@ -21,7 +60,14 @@ menu = ReplyKeyboardMarkup(
 )
 
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# =========================
+# /START
+# =========================
+
+async def start(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
     await update.message.reply_text(
         "✨ Вітаю у просторі гри «Ліла — гра життя»!\n\n"
         "Цей бот буде твоїм помічником під час нашої гри. "
@@ -33,8 +79,18 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-async def roll_dice(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    dice_message = await update.message.reply_dice(emoji="🎲")
+# =========================
+# DICE
+# =========================
+
+async def roll_dice(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+    dice_message = await update.message.reply_dice(
+        emoji="🎲"
+    )
+
     roll = dice_message.dice.value
 
     await update.message.reply_text(
@@ -43,7 +99,14 @@ async def roll_dice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# =========================
+# MENU BUTTONS
+# =========================
+
+async def handle_message(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
     text = update.message.text
 
     if text == "🎲 Кинути кубик":
@@ -68,28 +131,35 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 
-async def post_init(application: Application):
-    await application.bot.get_me()
-
+# =========================
+# START APPLICATION
+# =========================
 
 def main():
-    if not TOKEN:
-        raise RuntimeError("TELEGRAM_BOT_TOKEN is not set")
+    print("Starting Leela bot...")
 
-    app = (
-        Application.builder()
-        .token(TOKEN)
-        .post_init(post_init)
-        .build()
-    )
+    # Start web server so Render detects an open port
+    keep_alive()
 
-    app.add_handler(CommandHandler("start", start))
+    # Create Telegram application
+    app = Application.builder().token(TOKEN).build()
+
+    # Add handlers
     app.add_handler(
-        MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message)
+        CommandHandler("start", start)
     )
 
-    print("Leela bot is starting...")
-    app.run_polling(drop_pending_updates=True)
+    app.add_handler(
+        MessageHandler(
+            filters.TEXT & ~filters.COMMAND,
+            handle_message
+        )
+    )
+
+    print("Leela bot is running!")
+
+    # Start Telegram polling
+    app.run_polling()
 
 
 if __name__ == "__main__":
