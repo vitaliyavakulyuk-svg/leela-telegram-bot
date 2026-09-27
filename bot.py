@@ -9,7 +9,7 @@ from telegram.ext import (
     filters,
 )
 
-TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
+TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 
 menu = ReplyKeyboardMarkup(
     [
@@ -68,15 +68,28 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 
+async def post_init(application: Application):
+    await application.bot.get_me()
+
+
 def main():
-    app = Application.builder().token(TOKEN).build()
+    if not TOKEN:
+        raise RuntimeError("TELEGRAM_BOT_TOKEN is not set")
+
+    app = (
+        Application.builder()
+        .token(TOKEN)
+        .post_init(post_init)
+        .build()
+    )
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message)
     )
 
-    app.run_polling()
+    print("Leela bot is starting...")
+    app.run_polling(drop_pending_updates=True)
 
 
 if __name__ == "__main__":
