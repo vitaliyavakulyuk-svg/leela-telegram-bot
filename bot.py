@@ -107,13 +107,13 @@ def keep_alive():
 menu = ReplyKeyboardMarkup([
     ["🎲 Кинути кубик"],
     ["🗺️ Поле гри", "🃏 Відкрити карту"],
-    ["➕ Записати хід", "📍 Мої клітинки"],
+    ["📍 Моя клітинка"],
     ["🗑️ Почати нову гру"],
 ], resize_keyboard=True)
 
 
 def reset_prompt(context):
-    for key in ("waiting_for_card", "waiting_for_move", "waiting_for_clear"):
+    for key in ("waiting_for_card", "waiting_for_clear"):
         context.user_data.pop(key, None)
 
 
@@ -147,23 +147,17 @@ async def send_card(update, context, number):
     if not path.exists():
         await update.message.reply_text("Не знайшла цю карту. Спробуй ще раз.", reply_markup=menu)
         return
+    move_number = add_move(update.effective_user.id, number)
     reset_prompt(context)
     with path.open("rb") as card:
-        await update.message.reply_photo(card, caption=f"🃏 Карта №{number} — {CARD_NAMES[number]}", reply_markup=menu)
-
-
-async def ask_for_move(update, context):
-    reset_prompt(context)
-    context.user_data["waiting_for_move"] = True
-    await update.message.reply_text(
-        "➕ Напиши номер клітинки від 1 до 72. Я додам її до твоїх ходів.", reply_markup=menu)
-
-
-async def record_move(update, context, number):
-    index = add_move(update.effective_user.id, number)
-    reset_prompt(context)
-    await update.message.reply_text(
-        f"✅ Хід {index} записано:\n📍 {number} — {CARD_NAMES[number]}", reply_markup=menu)
+        await update.message.reply_photo(
+            card,
+            caption=(
+                f"🃏 Карта №{number} — {CARD_NAMES[number]}\n"
+                f"✅ Записано як хід {move_number}"
+            ),
+            reply_markup=menu,
+        )
 
 
 async def send_history(update):
@@ -171,7 +165,7 @@ async def send_history(update):
     if not moves:
         await update.message.reply_text(
             "📍 У тебе ще немає записаних клітинок.\n"
-            "Натисни «➕ Записати хід», коли зробиш перший хід.", reply_markup=menu)
+            "Натисни «🃏 Відкрити карту» та введи номер клітинки.", reply_markup=menu)
         return
     lines = ["📍 Твій шлях у грі:"]
     lines += [f"{i}. {number} — {CARD_NAMES[number]}" for i, number in enumerate(moves, 1)]
@@ -208,21 +202,16 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send_board(update)
     elif text == "🃏 Відкрити карту":
         await ask_for_card(update, context)
-    elif text == "➕ Записати хід":
-        await ask_for_move(update, context)
-    elif text == "📍 Мої клітинки":
+    elif text == "📍 Моя клітинка":
         reset_prompt(context)
         await send_history(update)
     elif text == "🗑️ Почати нову гру":
         await ask_to_clear(update, context)
     elif context.user_data.get("waiting_for_clear"):
         await handle_clear(update, context, text)
-    elif context.user_data.get("waiting_for_card") or context.user_data.get("waiting_for_move"):
+    elif context.user_data.get("waiting_for_card"):
         if text.isdigit() and 1 <= int(text) <= 72:
-            if context.user_data.get("waiting_for_card"):
-                await send_card(update, context, int(text))
-            else:
-                await record_move(update, context, int(text))
+            await send_card(update, context, int(text))
         else:
             await update.message.reply_text("Будь ласка, введи число від 1 до 72.", reply_markup=menu)
 
