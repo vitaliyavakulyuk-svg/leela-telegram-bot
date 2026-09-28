@@ -107,7 +107,7 @@ def keep_alive():
 menu = ReplyKeyboardMarkup([
     ["🎲 Кинути кубик"],
     ["🗺️ Поле гри", "🃏 Відкрити карту"],
-    ["📍 Моя клітинка"],
+    ["🧭 Мій шлях"],
     ["🗑️ Почати нову гру"],
 ], resize_keyboard=True)
 
@@ -202,7 +202,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send_board(update)
     elif text == "🃏 Відкрити карту":
         await ask_for_card(update, context)
-    elif text == "📍 Моя клітинка":
+    elif text == "🧭 Мій шлях":
         reset_prompt(context)
         await send_history(update)
     elif text == "🗑️ Почати нову гру":
