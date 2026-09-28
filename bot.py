@@ -1,27 +1,37 @@
 import os
+import zipfile
+from pathlib import Path
 from threading import Thread
 
 from flask import Flask
-from telegram import Update, ReplyKeyboardMarkup
+from telegram import ReplyKeyboardMarkup, Update
 from telegram.ext import (
     Application,
     CommandHandler,
-    MessageHandler,
     ContextTypes,
+    MessageHandler,
     filters,
 )
 
 
-# =========================
-# TELEGRAM BOT TOKEN
-# =========================
-
 TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
 
+BASE_DIR = Path(__file__).resolve().parent
+ARCHIVE_PATH = BASE_DIR / "leela_bot_images.zip"
+ASSETS_DIR = Path("/tmp/leela_bot_images")
+BOARD_PATH = ASSETS_DIR / "board.jpg"
+CARDS_DIR = ASSETS_DIR / "cards"
 
-# =========================
-# WEB SERVER FOR RENDER
-# =========================
+
+def prepare_images():
+    if not ARCHIVE_PATH.exists():
+        raise FileNotFoundError(f"Image archive not found: {ARCHIVE_PATH}")
+
+    if not BOARD_PATH.exists() or not (CARDS_DIR / "72.jpg").exists():
+        ASSETS_DIR.mkdir(parents=True, exist_ok=True)
+        with zipfile.ZipFile(ARCHIVE_PATH) as archive:
+            archive.extractall(ASSETS_DIR)
+
 
 web_app = Flask(__name__)
 
@@ -33,22 +43,13 @@ def home():
 
 def run_web_server():
     port = int(os.environ.get("PORT", 10000))
-    web_app.run(
-        host="0.0.0.0",
-        port=port,
-        use_reloader=False
-    )
+    web_app.run(host="0.0.0.0", port=port, use_reloader=False)
 
 
 def keep_alive():
-    thread = Thread(target=run_web_server)
-    thread.daemon = True
+    thread = Thread(target=run_web_server, daemon=True)
     thread.start()
 
-
-# =========================
-# BOT MENU
-# =========================
 
 menu = ReplyKeyboardMarkup(
     [
@@ -60,14 +61,8 @@ menu = ReplyKeyboardMarkup(
 )
 
 
-# =========================
-# /START
-# =========================
-
-async def start(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
-):
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data.pop("waiting_for_card", None)
     await update.message.reply_text(
         "✨ Вітаю у просторі гри «Ліла — гра життя»!\n\n"
         "Цей бот буде твоїм помічником під час нашої гри. "
@@ -79,86 +74,80 @@ async def start(
     )
 
 
-# =========================
-# DICE
-# =========================
-
-async def roll_dice(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
-):
-    dice_message = await update.message.reply_dice(
-        emoji="🎲"
-    )
-
-    roll = dice_message.dice.value
-
+async def roll_dice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    dice_message = await update.message.reply_dice(emoji="🎲")
     await update.message.reply_text(
-        f"Твій результат: {roll} 🎲",
+        f"Твій результат: {dice_message.dice.value} 🎲",
         reply_markup=menu,
     )
 
 
-# =========================
-# MENU BUTTONS
-# =========================
+async def send_board(update: Update):
+    with BOARD_PATH.open("rb") as board:
+        await update.message.reply_photo(
+            photo=board,
+            caption="🗺️ Поле гри «Ліла» — клітинки 1–72",
+            reply_markup=menu,
+        )
 
-async def handle_message(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
-):
-    text = update.message.text
+
+async def ask_for_card(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data["waiting_for_card"] = True
+    await update.message.reply_text(
+        "🃏 Напиши номер карти від 1 до 72.",
+        reply_markup=menu,
+    )
+
+
+async def send_card(update: Update, context: ContextTypes.DEFAULT_TYPE, number: int):
+    card_path = CARDS_DIR / f"{number:02d}.jpg"
+    if not card_path.exists():
+        await update.message.reply_text(
+            "Не знайшла цю карту. Спробуй ще раз.",
+            reply_markup=menu,
+        )
+        return
+
+    context.user_data.pop("waiting_for_card", None)
+    with card_path.open("rb") as card:
+        await update.message.reply_photo(
+            photo=card,
+            caption=f"🃏 Карта №{number}",
+            reply_markup=menu,
+        )
+
+
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.strip()
 
     if text == "🎲 Кинути кубик":
+        context.user_data.pop("waiting_for_card", None)
         await roll_dice(update, context)
-
     elif text == "🗺️ Поле гри":
-        await update.message.reply_text(
-            "🗺️ Тут буде поле гри «Ліла».",
-            reply_markup=menu,
-        )
+        context.user_data.pop("waiting_for_card", None)
+        await send_board(update)
+    elif text in {"🃏 Відкрити карту", "📍 Моя клітинка"}:
+        await ask_for_card(update, context)
+    elif context.user_data.get("waiting_for_card"):
+        if text.isdigit() and 1 <= int(text) <= 72:
+            await send_card(update, context, int(text))
+        else:
+            await update.message.reply_text(
+                "Будь ласка, введи число від 1 до 72.",
+                reply_markup=menu,
+            )
 
-    elif text == "🃏 Відкрити карту":
-        await update.message.reply_text(
-            "🃏 Тут ми додамо карти для кожної клітинки.",
-            reply_markup=menu,
-        )
-
-    elif text == "📍 Моя клітинка":
-        await update.message.reply_text(
-            "📍 Тут бот буде показувати твою поточну клітинку.",
-            reply_markup=menu,
-        )
-
-
-# =========================
-# START APPLICATION
-# =========================
 
 def main():
     print("Starting Leela bot...")
-
-    # Start web server so Render detects an open port
+    prepare_images()
     keep_alive()
 
-    # Create Telegram application
     app = Application.builder().token(TOKEN).build()
-
-    # Add handlers
-    app.add_handler(
-        CommandHandler("start", start)
-    )
-
-    app.add_handler(
-        MessageHandler(
-            filters.TEXT & ~filters.COMMAND,
-            handle_message
-        )
-    )
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
     print("Leela bot is running!")
-
-    # Start Telegram polling
     app.run_polling()
 
 
