@@ -131,8 +131,7 @@ async def require_access(update, context):
     message = (
         "🔐 Гра відкрита. Введи код, який дала ведуча."
         if is_open else
-        "🔒 Гра зараз не активна. Доступ відкриває ведуча перед початком гри. "
-        "Твій «🧭 Мій шлях» доступний для перегляду."
+        "🔐 Очікуй на код доступу від ведучої."
     )
     await update.message.reply_text(message, reply_markup=menu)
     return False
@@ -216,13 +215,7 @@ def reset_prompt(context):
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reset_prompt(context)
-    if WELCOME_PATH.exists():
-        with WELCOME_PATH.open("rb") as welcome:
-            await update.message.reply_photo(
-                welcome,
-                caption="✨ ЛІЛА — гра життя ✨",
-            )
-    await update.message.reply_text(
+    welcome_text = (
         "✨ Вітаю у просторі гри «Ліла — гра життя»! ✨\n\n"
         "Це подорож до себе — через запитання, усвідомлення та підказки, "
         "які відкриватимуться на твоєму шляху.\n\n"
@@ -231,9 +224,17 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🎲 Під час гри ти зможеш кидати кубик, переглядати поле й відкривати карти.\n"
         "🧭 У розділі «Мій шлях» збережеться історія всіх твоїх переходів.\n\n"
         "Налаштуйся на гру, сформулюй свій запит і дозволь собі бути чесною "
-        "або чесним із собою 🤍",
-        reply_markup=menu,
+        "або чесним із собою 🤍"
     )
+    if WELCOME_PATH.exists():
+        with WELCOME_PATH.open("rb") as welcome:
+            await update.message.reply_photo(
+                welcome,
+                caption=welcome_text,
+                reply_markup=menu,
+            )
+    else:
+        await update.message.reply_text(welcome_text, reply_markup=menu)
 
 
 async def roll_dice(update, context):
