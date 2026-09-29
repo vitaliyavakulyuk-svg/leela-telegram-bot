@@ -16,6 +16,7 @@ ASSETS_DIR = Path("/tmp/leela_bot_images")
 BOARD_PATH = ASSETS_DIR / "board.jpg"
 CARDS_DIR = ASSETS_DIR / "cards"
 HISTORY_PATH = BASE_DIR / "leela_history.json"
+WELCOME_PATH = BASE_DIR / "welcome.png"
 HISTORY_LOCK = Lock()
 SESSION_PATH = BASE_DIR / "leela_session.json"
 SESSION_LOCK = Lock()
@@ -168,7 +169,7 @@ async def try_join(update, code):
     with SESSION_LOCK:
         if not SESSION["open"]:
             message = "🔒 Гра зараз не активна."
-        elif has_joined := (user_id == ADMIN_ID or user_id in SESSION["allowed"]):
+        elif user_id == ADMIN_ID or user_id in SESSION["allowed"]:
             message = "✅ Ти вже маєш доступ до цієї гри."
         else:
             attempts = SESSION["attempts"].get(str(user_id), 0)
@@ -215,11 +216,24 @@ def reset_prompt(context):
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reset_prompt(context)
+    if WELCOME_PATH.exists():
+        with WELCOME_PATH.open("rb") as welcome:
+            await update.message.reply_photo(
+                welcome,
+                caption="✨ ЛІЛА — гра життя ✨",
+            )
     await update.message.reply_text(
-        "✨ Вітаю у просторі гри «Ліла — гра життя»!\n\n"
-        "Ведуча відкриє гру й дасть код учасникам. Введи код у приватному чаті, "
-        "щоб кидати кубик, відкривати поле й карти. "
-        "Твій шлях можна переглядати й після гри.", reply_markup=menu)
+        "✨ Вітаю у просторі гри «Ліла — гра життя»! ✨\n\n"
+        "Це подорож до себе — через запитання, усвідомлення та підказки, "
+        "які відкриватимуться на твоєму шляху.\n\n"
+        "🔐 Перед початком ведуча відкриє гру й повідомить код доступу. "
+        "Просто надішли цей код сюди одним повідомленням.\n\n"
+        "🎲 Під час гри ти зможеш кидати кубик, переглядати поле й відкривати карти.\n"
+        "🧭 У розділі «Мій шлях» збережеться історія всіх твоїх переходів.\n\n"
+        "Налаштуйся на гру, сформулюй свій запит і дозволь собі бути чесною "
+        "або чесним із собою 🤍",
+        reply_markup=menu,
+    )
 
 
 async def roll_dice(update, context):
