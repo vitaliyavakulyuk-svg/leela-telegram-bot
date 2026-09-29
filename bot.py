@@ -1,5 +1,6 @@
 import json
 import os
+import secrets
 import zipfile
 from pathlib import Path
 from threading import Lock, Thread
@@ -16,6 +17,9 @@ BOARD_PATH = ASSETS_DIR / "board.jpg"
 CARDS_DIR = ASSETS_DIR / "cards"
 HISTORY_PATH = BASE_DIR / "leela_history.json"
 HISTORY_LOCK = Lock()
+SESSION_PATH = BASE_DIR / "leela_session.json"
+SESSION_LOCK = Lock()
+ADMIN_ID = 835856665
 
 CARD_NAMES = {
     1: "Брама життя", 2: "Ілюзія", 3: "Гнів", 4: "Жадібність",
@@ -90,6 +94,98 @@ def clear_moves(user_id):
         save_histories()
 
 
+def load_session():
+    try:
+        with SESSION_PATH.open("r", encoding="utf-8") as file:
+            data = json.load(file)
+        if isinstance(data, dict) and isinstance(data.get("allowed"), list):
+            return data
+    except (OSError, json.JSONDecodeError):
+        pass
+    return {"open": False, "code": None, "allowed": [], "attempts": {}}
+
+
+SESSION = load_session()
+
+
+def save_session():
+    temp_path = SESSION_PATH.with_suffix(".tmp")
+    with temp_path.open("w", encoding="utf-8") as file:
+        json.dump(SESSION, file, ensure_ascii=False)
+    temp_path.replace(SESSION_PATH)
+
+
+def has_access(user_id):
+    with SESSION_LOCK:
+        return bool(SESSION["open"] and
+                    (user_id == ADMIN_ID or user_id in SESSION["allowed"]))
+
+
+async def require_access(update, context):
+    if has_access(update.effective_user.id):
+        return True
+    reset_prompt(context)
+    with SESSION_LOCK:
+        is_open = SESSION["open"]
+    message = (
+        "🔐 Гра відкрита. Введи код, який дала ведуча."
+        if is_open else
+        "🔒 Гра зараз не активна. Доступ відкриває ведуча перед початком гри. "
+        "Твій «🧭 Мій шлях» доступний для перегляду."
+    )
+    await update.message.reply_text(message, reply_markup=menu)
+    return False
+
+
+async def open_game(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID or update.effective_chat.type != "private":
+        await update.message.reply_text("Ця команда доступна лише ведучій у приватному чаті.")
+        return
+    with SESSION_LOCK:
+        if SESSION["open"]:
+            code = SESSION["code"]
+            message = f"Гра вже відкрита. Код цієї сесії: {code}"
+        else:
+            code = f"{secrets.randbelow(90000000) + 10000000:08d}"
+            SESSION.update(open=True, code=code, allowed=[], attempts={})
+            save_session()
+            message = f"🔓 Гру відкрито! Код для учасників: {code}\nПередай його лише гравцям за столом."
+    await update.message.reply_text(message, reply_markup=menu)
+
+
+async def close_game(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID or update.effective_chat.type != "private":
+        await update.message.reply_text("Ця команда доступна лише ведучій у приватному чаті.")
+        return
+    with SESSION_LOCK:
+        SESSION.update(open=False, code=None, allowed=[], attempts={})
+        save_session()
+    await update.message.reply_text("🔒 Гру закрито. Кубик, поле та карти заблоковані; історія шляху доступна.", reply_markup=menu)
+
+
+async def try_join(update, code):
+    user_id = update.effective_user.id
+    with SESSION_LOCK:
+        if not SESSION["open"]:
+            message = "🔒 Гра зараз не активна."
+        elif has_joined := (user_id == ADMIN_ID or user_id in SESSION["allowed"]):
+            message = "✅ Ти вже маєш доступ до цієї гри."
+        else:
+            attempts = SESSION["attempts"].get(str(user_id), 0)
+            if attempts >= 5:
+                message = "🔒 Забагато спроб. Попроси ведучу відкрити наступну сесію."
+            elif secrets.compare_digest(code, str(SESSION["code"])):
+                SESSION["allowed"].append(user_id)
+                SESSION["attempts"].pop(str(user_id), None)
+                save_session()
+                message = "✅ Доступ відкрито! Можна грати."
+            else:
+                SESSION["attempts"][str(user_id)] = attempts + 1
+                save_session()
+                message = "Код не підійшов. Перевір його у ведучої."
+    await update.message.reply_text(message, reply_markup=menu)
+
+
 web_app = Flask(__name__)
 
 
@@ -121,9 +217,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reset_prompt(context)
     await update.message.reply_text(
         "✨ Вітаю у просторі гри «Ліла — гра життя»!\n\n"
-        "Тут ти можеш кидати кубик, відкривати поле й карти, "
-        "записувати свої ходи та переглядати весь шлях гри.\n\n"
-        "✨ Готова/готовий почати?", reply_markup=menu)
+        "Ведуча відкриє гру й дасть код учасникам. Введи код у приватному чаті, "
+        "щоб кидати кубик, відкривати поле й карти. "
+        "Твій шлях можна переглядати й після гри.", reply_markup=menu)
 
 
 async def roll_dice(update, context):
@@ -193,7 +289,19 @@ async def handle_clear(update, context, text):
 
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_chat.type != "private":
+        await update.message.reply_text("Напиши боту в приватному чаті.")
+        return
     text = update.message.text.strip()
+    if text == "🧭 Мій шлях":
+        reset_prompt(context)
+        await send_history(update)
+        return
+    if text.isdigit() and len(text) == 8 and not has_access(update.effective_user.id):
+        await try_join(update, text)
+        return
+    if not await require_access(update, context):
+        return
     if text == "🎲 Кинути кубик":
         reset_prompt(context)
         await roll_dice(update, context)
@@ -202,9 +310,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send_board(update)
     elif text == "🃏 Відкрити карту":
         await ask_for_card(update, context)
-    elif text == "🧭 Мій шлях":
-        reset_prompt(context)
-        await send_history(update)
     elif text == "🗑️ Почати нову гру":
         await ask_to_clear(update, context)
     elif context.user_data.get("waiting_for_clear"):
@@ -222,6 +327,8 @@ def main():
     keep_alive()
     app = Application.builder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("open_game", open_game))
+    app.add_handler(CommandHandler("close_game", close_game))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     print("Leela bot is running!")
     app.run_polling()
